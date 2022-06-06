@@ -11,18 +11,18 @@ const socket = io.connect();
 //================= CONFIG =================
 // Stream Audio
 let bufferSize = 2048,
-  AudioContext,
-  context,
-  processor,
-  input,
-  globalStream;
+    AudioContext,
+    context,
+    processor,
+    input,
+    globalStream;
 
 //vars
 let audioElement = document.querySelector('audio'),
-  finalWord = false,
-  resultText = document.getElementById('ResultText'),
-  removeLastSentence = true,
-  streamStreaming = false;
+    finalWord = false,
+    resultText = document.getElementById('ResultText'),
+    removeLastSentence = true,
+    streamStreaming = false;
 
 //audioStream constraints
 const constraints = {
@@ -34,6 +34,7 @@ const constraints = {
 
 async function initRecording() {
   socket.emit('startGoogleCloudStream', ''); //init socket Google Speech Connection
+  socket.emit('startRecording', '');
   streamStreaming = true;
   AudioContext = window.AudioContext || window.webkitAudioContext;
   context = new AudioContext({
@@ -43,18 +44,19 @@ async function initRecording() {
 
   await context.audioWorklet.addModule('./assets/js/recorderWorkletProcessor.js')
   context.resume();
-  
+
   globalStream = await navigator.mediaDevices.getUserMedia(constraints)
   input = context.createMediaStreamSource(globalStream)
   processor = new window.AudioWorkletNode(
-    context,
-    'recorder.worklet'
+      context,
+      'recorder.worklet'
   );
   processor.connect(context.destination);
   context.resume()
   input.connect(processor)
   processor.port.onmessage = (e) => {
     const audioData = e.data;
+    // console.log(`New audio data: ${audioData}.length = ${audioData.byteLength}`)
     microphoneProcess(audioData)
   }
 }
@@ -72,12 +74,30 @@ endButton.addEventListener('click', stopRecording);
 endButton.disabled = true;
 
 var recordingStatus = document.getElementById('recordingStatus');
+let recordingIsOnSomewhere = false;
+
+function blockBtns() {
+  return
+  startButton.disabled = true;
+  endButton.disabled = true;
+  console.log("blocked buttons");
+}
+
+function unblockBtns() {
+  startButton.disabled = false;
+  endButton.disabled = false;
+  console.log("unblocked buttons")
+}
 
 function startRecording() {
+  // if (recordingIsOnSomewhere) {
+  //     console.log("Speaker already exists.")
+  // } else {
   startButton.disabled = true;
   endButton.disabled = false;
   recordingStatus.style.visibility = 'visible';
   initRecording();
+  // }
 }
 
 function stopRecording() {
@@ -87,6 +107,8 @@ function stopRecording() {
   recordingStatus.style.visibility = 'hidden';
   streamStreaming = false;
   socket.emit('endGoogleCloudStream', '');
+  socket.emit('stopRecording', '');
+
 
   let track = globalStream.getTracks()[0];
   track.stop();
@@ -120,6 +142,16 @@ socket.on('connect', function (data) {
   socket.emit('join', 'Server Connected to Client');
 });
 
+socket.on('recordingSwitched', function (data) {
+  recordingIsOnSomewhere = (data === 'true');
+  console.log('recording switched to ' + data);
+  if (recordingIsOnSomewhere) {
+    blockBtns();
+  } else {
+    unblockBtns();
+  }
+});
+
 socket.on('messages', function (data) {
   console.log(data);
 });
@@ -145,7 +177,7 @@ socket.on('speechData', function (data) {
     for (var i = 0; i < edit.length; i++) {
       resultText.lastElementChild.appendChild(edit[i]);
       resultText.lastElementChild.appendChild(
-        document.createTextNode('\u00A0')
+          document.createTextNode('\u00A0')
       );
     }
   } else if (dataFinal === true) {
@@ -165,12 +197,12 @@ socket.on('speechData', function (data) {
 
       if (i !== edit.length - 1) {
         resultText.lastElementChild.appendChild(
-          document.createTextNode('\u00A0')
+            document.createTextNode('\u00A0')
         );
       }
     }
     resultText.lastElementChild.appendChild(
-      document.createTextNode('\u002E\u00A0')
+        document.createTextNode('\u002E\u00A0')
     );
 
     console.log("Google Speech sent 'final' Sentence.");
@@ -183,8 +215,9 @@ socket.on('speechData', function (data) {
 
 //================= Juggling Spans for nlp Coloring =================
 function addTimeSettingsInterim(speechData) {
+  console.log(speechData)
   let wholeString = speechData.results[0].alternatives[0].transcript;
-  console.log(wholeString);
+  // console.log(wholeString);
 
   let nlpObject = nlp(wholeString).out('terms');
 

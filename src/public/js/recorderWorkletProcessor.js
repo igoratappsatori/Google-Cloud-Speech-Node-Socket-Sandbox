@@ -1,6 +1,6 @@
 /**
-  An in-place replacement for ScriptProcessorNode using AudioWorklet
-*/
+ An in-place replacement for ScriptProcessorNode using AudioWorklet
+ */
 class RecorderProcessor extends AudioWorkletProcessor {
   // 0. Determine the buffer size (this is the same as the 1st argument of ScriptProcessor)
   bufferSize = 2048
@@ -9,7 +9,7 @@ class RecorderProcessor extends AudioWorkletProcessor {
 
   // 2. Create a buffer of fixed size
   _buffer = new Float32Array(this.bufferSize)
-  
+
   constructor() {
     super()
     this.initBuffer()
@@ -26,14 +26,17 @@ class RecorderProcessor extends AudioWorkletProcessor {
   isBufferFull() {
     return this._bytesWritten === this.bufferSize
   }
-  
-    /**
+
+  /**
    * @param {Float32Array[][]} inputs
    * @returns {boolean}
    */
   process(inputs) {
     // Grabbing the 1st channel similar to ScriptProcessorNode
-    this.append(inputs[0][0])
+    let inputElement = inputs[0][0];
+    this.append(inputElement);
+
+    // console.log(`input appended: ${inputElement}`)
 
     return true
   }
@@ -53,18 +56,27 @@ class RecorderProcessor extends AudioWorkletProcessor {
       this._buffer[this._bytesWritten++] = channelData[i]
     }
   }
-  
+
   flush() {
+
+    // console.log("flushing...")
+
     // trim the buffer if ended prematurely
     const buffer = this._bytesWritten < this.bufferSize
-      ? this._buffer.slice(0, this._bytesWritten)
-      : this._buffer
+        ? this._buffer.slice(0, this._bytesWritten)
+        : this._buffer
     const result = this.downsampleBuffer(buffer, 44100, 16000);
+
+    // console.log(`downsampled buffer result: ${result}`)
+
     this.port.postMessage(result)
+
+    // console.log("result posted to port")
+
     this.initBuffer()
   }
 
-  downsampleBuffer (buffer, sampleRate, outSampleRate) {
+  downsampleBuffer(buffer, sampleRate, outSampleRate) {
     if (outSampleRate == sampleRate) {
       return buffer;
     }
@@ -79,12 +91,12 @@ class RecorderProcessor extends AudioWorkletProcessor {
     while (offsetResult < result.length) {
       var nextOffsetBuffer = Math.round((offsetResult + 1) * sampleRateRatio);
       var accum = 0,
-        count = 0;
+          count = 0;
       for (var i = offsetBuffer; i < nextOffsetBuffer && i < buffer.length; i++) {
         accum += buffer[i];
         count++;
       }
-  
+
       result[offsetResult] = Math.min(1, accum / count) * 0x7fff;
       offsetResult++;
       offsetBuffer = nextOffsetBuffer;

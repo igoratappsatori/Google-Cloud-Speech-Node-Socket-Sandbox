@@ -13,7 +13,7 @@ const speech = require('@google-cloud/speech');
 const speechClient = new speech.SpeechClient(); // Creates a client
 
 const app = express();
-const port = process.env.PORT || 1337;
+const port = 8080;
 const server = require('http').createServer(app);
 
 const io = require('socket.io')(server);
@@ -21,6 +21,19 @@ const io = require('socket.io')(server);
 app.use('/assets', express.static(__dirname + '/public'));
 app.use('/session/assets', express.static(__dirname + '/public'));
 app.set('view engine', 'ejs');
+
+let recordingStarted = false;
+let streamingLimit = 210000; //210000 ms ~ 3.5 min
+let recognizeStream = null;
+let restartCounter = 0;
+let audioInput = [];
+let lastAudioInput = [];
+let resultEndTime = 0;
+let isFinalEndTime = 0;
+let finalRequestEndTime = 0;
+let newStream = true;
+let bridgingOffset = 0;
+let lastTranscriptWasFinal = false;
 
 // =========================== ROUTERS ================================ //
 
@@ -36,10 +49,19 @@ app.use('/', function (req, res, next) {
 
 io.on('connection', function (client) {
   console.log('Client Connected to server');
-  let recognizeStream = null;
 
   client.on('join', function () {
     client.emit('messages', 'Socket Connected to Server');
+  });
+
+  client.on('startRecording', function () {
+    recordingStarted = true;
+    io.sockets.emit('recordingSwitched', `${recordingStarted}`);
+  });
+
+  client.on('stopRecording', function () {
+    recordingStarted = false;
+    io.sockets.emit('recordingSwitched', `${recordingStarted}`);
   });
 
   client.on('messages', function (data) {
@@ -57,30 +79,94 @@ io.on('connection', function (client) {
   client.on('binaryData', function (data) {
     // console.log(data); //log binary data
     if (recognizeStream !== null) {
-      recognizeStream.write(data);
+      if (newStream && lastAudioInput.length !== 0) {
+        // Approximate math to calculate time of chunks
+        const chunkTime = streamingLimit / lastAudioInput.length;
+        if (chunkTime !== 0) {
+          if (bridgingOffset < 0) {
+            bridgingOffset = 0;
+          }
+          if (bridgingOffset > finalRequestEndTime) {
+            bridgingOffset = finalRequestEndTime;
+          }
+          const chunksFromMS = Math.floor(
+              (finalRequestEndTime - bridgingOffset) / chunkTime
+          );
+          bridgingOffset = Math.floor(
+              (lastAudioInput.length - chunksFromMS) * chunkTime
+          );
+
+          for (let i = chunksFromMS; i < lastAudioInput.length; i++) {
+            recognizeStream.write(lastAudioInput[i]);
+          }
+        }
+        newStream = false;
+      }
+
+      audioInput.push(data);
+
+      if (recognizeStream) {
+        recognizeStream.write(data);
+      }
+      // recognizeStream.write(data);
     }
   });
 
-  function startRecognitionStream(client) {
-    recognizeStream = speechClient
-      .streamingRecognize(request)
-      .on('error', console.error)
-      .on('data', (data) => {
-        process.stdout.write(
-          data.results[0] && data.results[0].alternatives[0]
+  const speechCallback = data => {
+    process.stdout.write(
+        data.results[0] && data.results[0].alternatives[0]
             ? `Transcription: ${data.results[0].alternatives[0].transcript}\n`
             : '\n\nReached transcription time limit, press Ctrl+C\n'
-        );
-        client.emit('speechData', data);
+    );
+    io.sockets.emit('speechData', data);
+    // console.log(data)
+    // client.emit('speechData', data);
 
-        // if end of utterance, let's restart stream
-        // this is a small hack. After 65 seconds of silence, the stream will still throw an error for speech length limit
-        if (data.results[0] && data.results[0].isFinal) {
-          stopRecognitionStream();
-          startRecognitionStream(client);
-          // console.log('restarted stream serverside');
-        }
-      });
+    // if end of utterance, let's restart stream
+    // this is a small hack. After 65 seconds of silence, the stream will still throw an error for speech length limit
+    // if (data.results[0] && data.results[0].isFinal) {
+    //   stopRecognitionStream();
+    //   startRecognitionStream(client);
+    //   // console.log('restarted stream serverside');
+    // }
+  };
+
+
+  function startRecognitionStream(client) {
+    recognizeStream = speechClient
+        .streamingRecognize(request)
+        .on('error', console.error)
+        .on('data', speechCallback);
+
+    setTimeout(restartStream, streamingLimit);
+  }
+
+  function restartStream() {
+    if (recognizeStream) {
+      recognizeStream.end();
+      recognizeStream.removeListener('data', speechCallback);
+      recognizeStream = null;
+    }
+    if (resultEndTime > 0) {
+      finalRequestEndTime = isFinalEndTime;
+    }
+    resultEndTime = 0;
+
+    lastAudioInput = [];
+    lastAudioInput = audioInput;
+
+    restartCounter++;
+
+    if (!lastTranscriptWasFinal) {
+      process.stdout.write('\n');
+    }
+    process.stdout.write(
+        `${streamingLimit * restartCounter}: RESTARTING REQUEST\n`
+    );
+
+    newStream = true;
+
+    startRecognitionStream();
   }
 
   function stopRecognitionStream() {
@@ -98,7 +184,8 @@ io.on('connection', function (client) {
 // The BCP-47 language code to use, e.g. 'en-US'
 const encoding = 'LINEAR16';
 const sampleRateHertz = 16000;
-const languageCode = 'en-US'; //en-US
+// const languageCode = 'en-US'; //en-US
+const languageCode = 'cs-CZ'; //en-US
 
 const request = {
   config: {
@@ -107,6 +194,9 @@ const request = {
     languageCode: languageCode,
     profanityFilter: false,
     enableWordTimeOffsets: true,
+    enableAutomaticPunctuation: true,
+    enableWordConfidence: true,
+    // enableSpokenPunctuation: true,
     // speechContexts: [{
     //     phrases: ["hoful","shwazil"]
     //    }] // add your own speech context for better recognition

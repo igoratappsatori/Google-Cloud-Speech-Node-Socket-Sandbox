@@ -1,4 +1,4 @@
-# Google Cloud Speech Node with Socket Playground
+# Google Cloud Speech Node with Socket Sandbox
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
